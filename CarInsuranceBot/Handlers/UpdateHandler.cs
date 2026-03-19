@@ -15,12 +15,10 @@ public class UpdateHandler(
     Dictionary<string, string> prompts)
 {
     private static readonly ConcurrentDictionary<long, UserSession> _sessions = new();
-
     private readonly string _aiSystemRole = prompts[PromptKeys.SystemRole];
 
     public async Task HandleUpdateAsync(Update update, CancellationToken ct)
     {
-        // Buttons click processing
         if (update.Type == UpdateType.CallbackQuery && update.CallbackQuery != null)
         {
             await HandleCallbackAsync(update.CallbackQuery, ct);
@@ -34,15 +32,12 @@ public class UpdateHandler(
         if (message.Text == "/start")
         {
             session.Reset();
-
             var aiWelcome = await aiService.GetAiReplyAsync(_aiSystemRole, prompts[PromptKeys.Welcome]);
-            
             session.State = UserState.WaitingForPassport;
             await botClient.SendMessage(chatId, aiWelcome, cancellationToken:ct);
             return;
         }
 
-        // Main states logic
         switch (session.State)
         {
             case UserState.None:
@@ -50,23 +45,29 @@ public class UpdateHandler(
                 var welcomeResponse = await aiService.GetAiReplyAsync(_aiSystemRole, prompts[PromptKeys.PassportRequest]);
                 await botClient.SendMessage(chatId, welcomeResponse, cancellationToken: ct);
                 break;
+
             case UserState.WaitingForPassport:
                 if (message.Type == MessageType.Photo)
                 {
                     await ProcessPassport(message, session, ct);
                 }
-                else
+                else if (message.Type == MessageType.Text)
                 {
-                    var aiResponse = await aiService.GetAiReplyAsync(_aiSystemRole, prompts[PromptKeys.PassportRequest]);
+                    string explainPrompt = string.Format(prompts["ExplainRequirementPrompt"], message.Text);
+                    var aiResponse = await aiService.GetAiReplyAsync(_aiSystemRole, explainPrompt);
                     await botClient.SendMessage(chatId, aiResponse, cancellationToken:ct);
                 }
                 break;
 
             case UserState.WaitingForVehicleDoc:
-                if (message.Type == MessageType.Photo) await ProcessVehicleDoc(message, session, ct);
-                else
+                if (message.Type == MessageType.Photo) 
                 {
-                    var aiResponse = await aiService.GetAiReplyAsync(_aiSystemRole, prompts[PromptKeys.VehicleDocRequest]);
+                    await ProcessVehicleDoc(message, session, ct);
+                }
+                else if (message.Type == MessageType.Text)
+                {
+                    string explainPrompt = string.Format(prompts["ExplainRequirementPrompt"], message.Text);
+                    var aiResponse = await aiService.GetAiReplyAsync(_aiSystemRole, explainPrompt);
                     await botClient.SendMessage(chatId, aiResponse, cancellationToken:ct);
                 }
                 break;
@@ -120,6 +121,7 @@ public class UpdateHandler(
     {
         var analyzeResponse = await aiService.GetAiReplyAsync(_aiSystemRole, prompts[PromptKeys.AnalyzeData]);
         await botClient.SendMessage(session.ChatId, analyzeResponse, cancellationToken:ct);
+        
         using var stream = await DownloadFile(message.Photo!.Last().FileId, ct);
         var (vin, model) = await mindeeService.ParseVehicleDocAsync(stream);
 
@@ -127,7 +129,12 @@ public class UpdateHandler(
         session.CarModel = model;
         session.State = UserState.ConfirmingData;
         
-        string dynamicPrompt = string.Format(prompts[PromptKeys.ResultSummary], session.FullName, session.DocumentNumber, vin, model);
+        string dynamicPrompt = string.Format(prompts[PromptKeys.ResultSummary], 
+            session.FullName ?? "", 
+            session.DocumentNumber ?? "", 
+            vin ?? "", 
+            model ?? "");
+            
         var resultResponse = await aiService.GetAiReplyAsync(_aiSystemRole, dynamicPrompt);
         
         var keyboard = new InlineKeyboardMarkup(new[]
@@ -146,14 +153,12 @@ public class UpdateHandler(
         if (callback.Data == "data_ok")
         {
             session.State = UserState.WaitingForPriceAgreement;
-            
             var priceResponse = await aiService.GetAiReplyAsync(_aiSystemRole, prompts[PromptKeys.PriceOffer]);
             await botClient.EditMessageText(session.ChatId, callback.Message.MessageId, priceResponse, cancellationToken: ct);
         }
         else if (callback.Data == "data_error")
         {
             session.State = UserState.WaitingForPassport;
-            
             var errorResponse = await aiService.GetAiReplyAsync(_aiSystemRole, prompts[PromptKeys.DataErrorRetry]);
             await botClient.SendMessage(session.ChatId, errorResponse, cancellationToken:ct);
         }
@@ -161,7 +166,6 @@ public class UpdateHandler(
         {
             session.Reset();
             session.State = UserState.WaitingForPassport;
-    
             var welcomeResponse = await aiService.GetAiReplyAsync(_aiSystemRole, prompts[PromptKeys.Welcome]);
             await botClient.SendMessage(session.ChatId, welcomeResponse, cancellationToken: ct);
         }
@@ -170,18 +174,19 @@ public class UpdateHandler(
     private async Task HandlePriceResponse(Message message, UserSession session, CancellationToken ct)
     {
         string input = message.Text?.ToLower() ?? "";
-        
         string dynamicAgreePrompt = string.Format(prompts[PromptKeys.AgreeCheck], input);
         var agreeResponse = await aiService.GetAiReplyAsync(_aiSystemRole, dynamicAgreePrompt);
 
-        if (agreeResponse == "Yes")
+        if (agreeResponse.Contains("Yes"))
         {
             session.State = UserState.Finished;
-            
             var agreePolicyResponse = await aiService.GetAiReplyAsync(_aiSystemRole, prompts[PromptKeys.AgreePolicy]);
             await botClient.SendMessage(session.ChatId, agreePolicyResponse, cancellationToken:ct);
 
-            string dynamicPolicyPrompt = string.Format(prompts[PromptKeys.PolicyGeneration], session.FullName, session.CarModel, session.VinCode);
+            string dynamicPolicyPrompt = string.Format(prompts[PromptKeys.PolicyGeneration], 
+                session.FullName ?? "", 
+                session.CarModel ?? "", 
+                session.VinCode ?? "");
             
             string policyResponce = await aiService.GetAiReplyAsync(_aiSystemRole, dynamicPolicyPrompt);
             await botClient.SendMessage(session.ChatId, policyResponce, cancellationToken:ct);
@@ -192,7 +197,6 @@ public class UpdateHandler(
         else
         {
             var apologyResponse = await aiService.GetAiReplyAsync(_aiSystemRole, prompts[PromptKeys.Apology]);
-            
             var keyboard = new InlineKeyboardMarkup(new[]
             {
                 new[] { InlineKeyboardButton.WithCallbackData("I agree now ($100) ✅", "data_ok") },
