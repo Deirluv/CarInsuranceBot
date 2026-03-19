@@ -1,0 +1,12 @@
+[Bb]in/
+[Ob]j/
+
+.idea/
+.vs/
+*.user
+*.userosscache
+*.sln.doccache
+*.suo
+
+Thumbs.db
+.DS_Store
