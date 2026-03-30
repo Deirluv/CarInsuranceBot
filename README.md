@@ -26,6 +26,7 @@ An automated Telegram bot designed to assist users in purchasing car insurance. 
 ### 2. Configuration
 Clone the repository and locate appsettings.json in the root directory. Fill in credentials
 
+```json
 {
   "ApiConfiguration": {
     "TelegramToken": "YOUR_TELEGRAM_BOT_TOKEN",
@@ -39,6 +40,7 @@ Clone the repository and locate appsettings.json in the root directory. Fill in 
     "VehicleModelId": "YOUR_VEHICLE_MODEL_ID"
   }
 }
+```
 
 ### 3. Run the Bot
 Open your terminal in the project folder and execute
